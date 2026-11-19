@@ -1,0 +1,2339 @@
+<!DOCTYPE html>
+<html lang="zh-Hant" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PatchLens — Git Patch & Diff 視覺化對比檢視器</title>
+  <style>
+    /* ==========================================================================
+       1. Design Tokens & Theme Variables (GitHub Primer 風格配色)
+       ========================================================================== */
+    :root {
+      --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft JhengHei", Roboto, sans-serif;
+      --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', Consolas, 'Courier New', monospace;
+      --radius-sm: 6px;
+      --radius-md: 10px;
+      --radius-lg: 14px;
+      --header-height: 60px;
+      --sidebar-width: 300px;
+      --transition-fast: 150ms cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    /* === 預設淺色主題 (GitHub Light) === */
+    [data-theme="light"] {
+      --bg-canvas: #ffffff;
+      --bg-surface: #f6f8fa;
+      --bg-surface-elevated: #eef1f4;
+      --bg-header: rgba(255, 255, 255, 0.88);
+      --bg-hover: rgba(208, 215, 222, 0.32);
+      --bg-active: rgba(9, 105, 218, 0.1);
+      --border-default: #d0d7de;
+      --border-muted: #e5e7eb;
+      --text-primary: #1f2328;
+      --text-secondary: #656d76;
+      --text-muted: #8c959f;
+      --accent-primary: #0969da;
+      --accent-hover: #0550ae;
+      --accent-subtle: rgba(9, 105, 218, 0.1);
+
+      /* Diff Colors - Light Mode (GitHub 慣用色) */
+      --diff-add-bg: #e6ffec;
+      --diff-add-num-bg: #ccffd8;
+      --diff-add-word: #abf2bc;
+      --diff-add-text: #1a7f37;
+      --diff-del-bg: #ffebe9;
+      --diff-del-num-bg: #ffd7d5;
+      --diff-del-word: #ffb3b0;
+      --diff-del-text: #cf222e;
+      --diff-hunk-bg: #ddf4ff;
+      --diff-hunk-num-bg: #b6e3ff;
+      --diff-hunk-text: #0969da;
+      --diff-empty-bg: #f6f8fa;
+
+      /* Syntax Highlighting - Light */
+      --syn-keyword: #cf222e;
+      --syn-comment: #6e7781;
+      --syn-string: #0a3069;
+      --syn-number: #0550ae;
+      --syn-preproc: #8250df;
+      --syn-func: #8250df;
+
+      --shadow-sm: 0 1px 2px rgba(31, 35, 40, 0.06);
+      --shadow-md: 0 6px 18px rgba(31, 35, 40, 0.1);
+      --shadow-lg: 0 12px 36px rgba(31, 35, 40, 0.16);
+    }
+
+    /* === 深色主題 (GitHub Dark) === */
+    [data-theme="dark"] {
+      --bg-canvas: #0d1117;
+      --bg-surface: #161b22;
+      --bg-surface-elevated: #1c2128;
+      --bg-header: rgba(22, 27, 34, 0.85);
+      --bg-hover: rgba(177, 186, 196, 0.1);
+      --bg-active: rgba(56, 139, 253, 0.15);
+      --border-default: #30363d;
+      --border-muted: #21262d;
+      --text-primary: #e6edf3;
+      --text-secondary: #8b949e;
+      --text-muted: #6e7681;
+      --accent-primary: #58a6ff;
+      --accent-hover: #79c0ff;
+      --accent-subtle: rgba(56, 139, 253, 0.15);
+
+      --diff-add-bg: rgba(46, 160, 67, 0.15);
+      --diff-add-num-bg: rgba(46, 160, 67, 0.25);
+      --diff-add-word: rgba(46, 160, 67, 0.42);
+      --diff-add-text: #3fb950;
+      --diff-del-bg: rgba(248, 81, 73, 0.15);
+      --diff-del-num-bg: rgba(248, 81, 73, 0.25);
+      --diff-del-word: rgba(248, 81, 73, 0.42);
+      --diff-del-text: #f85149;
+      --diff-hunk-bg: rgba(56, 139, 253, 0.1);
+      --diff-hunk-num-bg: rgba(56, 139, 253, 0.18);
+      --diff-hunk-text: #79c0ff;
+      --diff-empty-bg: rgba(110, 118, 129, 0.08);
+
+      --syn-keyword: #ff7b72;
+      --syn-comment: #8b949e;
+      --syn-string: #a5d6ff;
+      --syn-number: #79c0ff;
+      --syn-preproc: #d2a8ff;
+      --syn-func: #d2a8ff;
+
+      --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+      --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.5);
+      --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.65);
+    }
+
+    /* ==========================================================================
+       2. Reset & Base Styles
+       ========================================================================== */
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html, body {
+      height: 100%;
+      background-color: var(--bg-canvas);
+      color: var(--text-primary);
+      font-family: var(--font-sans);
+      font-size: 14px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+      overflow-x: hidden;
+    }
+
+    button, input, textarea {
+      font-family: inherit;
+      color: inherit;
+    }
+
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: var(--border-default);
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: var(--text-muted);
+    }
+
+    /* ==========================================================================
+       3. Top Navigation Bar
+       ========================================================================== */
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      height: var(--header-height);
+      background: var(--bg-header);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border-default);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 16px;
+      gap: 12px;
+    }
+
+    .topbar-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 700;
+      font-size: 15px;
+      letter-spacing: -0.02em;
+      color: var(--text-primary);
+      white-space: nowrap;
+    }
+
+    .brand-icon {
+      width: 28px;
+      height: 28px;
+      border-radius: 8px;
+      background: linear-gradient(135deg, #1a7f37, #0969da);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+      box-shadow: 0 2px 8px rgba(9, 105, 218, 0.35);
+      flex-shrink: 0;
+    }
+
+    .patch-badge {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-sm);
+      padding: 4px 10px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--text-secondary);
+      max-width: 320px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .patch-badge.empty {
+      opacity: 0.55;
+      font-style: italic;
+    }
+
+    .topbar-center {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .stats-pill {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-default);
+      border-radius: 999px;
+      padding: 4px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .stat-files {
+      color: var(--text-secondary);
+    }
+
+    .stat-add {
+      color: var(--diff-add-text);
+      font-family: var(--font-mono);
+    }
+
+    .stat-del {
+      color: var(--diff-del-text);
+      font-family: var(--font-mono);
+    }
+
+    .diff-bar {
+      display: inline-flex;
+      gap: 2px;
+      align-items: center;
+    }
+
+    .diff-bar-block {
+      width: 7px;
+      height: 7px;
+      border-radius: 1.5px;
+    }
+    .diff-bar-block.add { background-color: var(--diff-add-text); }
+    .diff-bar-block.del { background-color: var(--diff-del-text); }
+    .diff-bar-block.neutral { background-color: var(--border-default); }
+
+    .topbar-right {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      height: 32px;
+      padding: 0 12px;
+      font-size: 12.5px;
+      font-weight: 500;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border-default);
+      background: var(--bg-canvas);
+      color: var(--text-primary);
+      cursor: pointer;
+      transition: all var(--transition-fast);
+      white-space: nowrap;
+      user-select: none;
+    }
+
+    .btn:hover:not(:disabled) {
+      background: var(--bg-surface-elevated);
+      border-color: var(--text-muted);
+    }
+
+    .btn:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
+    .btn-primary {
+      background: #1f883d;
+      border-color: rgba(240, 246, 252, 0.1);
+      color: #ffffff;
+      font-weight: 600;
+    }
+
+    .btn-primary:hover:not(:disabled) {
+      background: #1a7f37;
+      border-color: rgba(240, 246, 252, 0.2);
+    }
+
+    .btn-success {
+      background: #0969da;
+      border-color: rgba(240, 246, 252, 0.1);
+      color: #ffffff;
+      font-weight: 600;
+    }
+
+    .btn-success:hover:not(:disabled) {
+      background: #0550ae;
+      border-color: rgba(240, 246, 252, 0.2);
+    }
+
+    .btn-icon {
+      width: 32px;
+      padding: 0;
+    }
+
+    .segmented-group {
+      display: inline-flex;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-sm);
+      padding: 2px;
+    }
+
+    .segmented-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      height: 26px;
+      padding: 0 10px;
+      font-size: 12px;
+      font-weight: 500;
+      border: none;
+      background: transparent;
+      color: var(--text-secondary);
+      border-radius: 4px;
+      cursor: pointer;
+      transition: all var(--transition-fast);
+    }
+
+    .segmented-btn:hover {
+      color: var(--text-primary);
+    }
+
+    .segmented-btn.active {
+      background: var(--bg-canvas);
+      color: var(--text-primary);
+      box-shadow: var(--shadow-sm);
+      font-weight: 600;
+    }
+
+    /* ==========================================================================
+       4. Main Layout (Sidebar + Diff Workspace)
+       ========================================================================== */
+    .workspace {
+      display: flex;
+      min-height: calc(100vh - var(--header-height));
+      position: relative;
+    }
+
+    .sidebar {
+      width: var(--sidebar-width);
+      flex-shrink: 0;
+      background: var(--bg-surface);
+      border-right: 1px solid var(--border-default);
+      display: flex;
+      flex-direction: column;
+      position: sticky;
+      top: var(--header-height);
+      height: calc(100vh - var(--header-height));
+      transition: margin-left 220ms cubic-bezier(0.16, 1, 0.3, 1);
+      z-index: 30;
+    }
+
+    .sidebar.collapsed {
+      margin-left: calc(var(--sidebar-width) * -1);
+    }
+
+    .sidebar-header {
+      padding: 12px;
+      border-bottom: 1px solid var(--border-muted);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .sidebar-title-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .search-box {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+
+    .search-box svg {
+      position: absolute;
+      left: 9px;
+      color: var(--text-muted);
+      pointer-events: none;
+    }
+
+    .search-input {
+      width: 100%;
+      height: 30px;
+      padding: 0 28px 0 30px;
+      font-size: 12.5px;
+      background: var(--bg-canvas);
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-sm);
+      outline: none;
+      transition: border-color var(--transition-fast);
+    }
+
+    .search-input:focus {
+      border-color: var(--accent-primary);
+      box-shadow: 0 0 0 2px var(--accent-subtle);
+    }
+
+    .search-clear {
+      position: absolute;
+      right: 6px;
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      display: none;
+      padding: 2px;
+    }
+
+    .search-clear.visible {
+      display: flex;
+    }
+
+    .file-tree {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .tree-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      padding: 8px 10px;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      transition: background var(--transition-fast);
+      border: 1px solid transparent;
+    }
+
+    .tree-item:hover {
+      background: var(--bg-hover);
+    }
+
+    .tree-item.active {
+      background: var(--bg-active);
+      border-color: rgba(9, 105, 218, 0.3);
+    }
+
+    .ext-badge {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 5px;
+      border-radius: 4px;
+      text-transform: uppercase;
+      flex-shrink: 0;
+      margin-top: 2px;
+    }
+
+    .ext-c { background: #ddf4ff; color: #0969da; }
+    .ext-h { background: #fbefff; color: #8250df; }
+    .ext-dsc { background: #fff8c5; color: #9a6700; }
+    .ext-default { background: #eaeef2; color: var(--text-secondary); }
+
+    [data-theme="dark"] .ext-c { background: rgba(56, 139, 253, 0.18); color: #58a6ff; }
+    [data-theme="dark"] .ext-h { background: rgba(210, 168, 255, 0.18); color: #d2a8ff; }
+    [data-theme="dark"] .ext-dsc { background: rgba(210, 153, 34, 0.2); color: #e3b341; }
+    [data-theme="dark"] .ext-default { background: rgba(139, 148, 158, 0.2); color: var(--text-secondary); }
+
+    .tree-item-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .tree-item-name {
+      font-family: var(--font-mono);
+      font-size: 12.5px;
+      font-weight: 600;
+      color: var(--text-primary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .tree-item-dir {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .tree-item-stats {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 600;
+      flex-shrink: 0;
+      margin-top: 2px;
+    }
+
+    /* ==========================================================================
+       5. Main Content & Toolbar
+       ========================================================================== */
+    .main-content {
+      flex: 1;
+      min-width: 0;
+      padding: 16px 20px 60px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .upload-strip {
+      border: 1.5px dashed var(--border-default);
+      background: var(--bg-surface);
+      border-radius: var(--radius-md);
+      padding: 12px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 12px;
+      transition: all var(--transition-fast);
+    }
+
+    .upload-strip.drag-over {
+      border-color: var(--accent-primary);
+      background: var(--accent-subtle);
+      transform: scale(1.003);
+    }
+
+    .upload-strip-info {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .upload-icon-circle {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      background: var(--accent-subtle);
+      color: var(--accent-primary);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .upload-strip-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .diff-controls-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .diff-controls-left, .diff-controls-right {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    /* Empty State */
+    .empty-state {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-md);
+      padding: 60px 24px;
+      text-align: center;
+      color: var(--text-secondary);
+    }
+
+    .empty-state-icon {
+      width: 64px;
+      height: 64px;
+      border-radius: 50%;
+      background: var(--accent-subtle);
+      color: var(--accent-primary);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 16px;
+    }
+
+    .empty-state-title {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--text-primary);
+      margin-bottom: 8px;
+    }
+
+    .empty-state-desc {
+      font-size: 13.5px;
+      line-height: 1.6;
+      max-width: 460px;
+      margin: 0 auto;
+    }
+
+    /* ==========================================================================
+       6. File Diff Cards & Code Tables
+       ========================================================================== */
+    .diff-files-container {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .file-card {
+      background: var(--bg-canvas);
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-md);
+      box-shadow: var(--shadow-sm);
+      overflow: clip;
+      scroll-margin-top: calc(var(--header-height) + 16px);
+    }
+
+    .file-card-header {
+      position: sticky;
+      top: var(--header-height);
+      z-index: 20;
+      background: var(--bg-surface);
+      border-bottom: 1px solid var(--border-default);
+      padding: 10px 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .file-card.collapsed .file-card-header {
+      border-bottom: none;
+    }
+
+    .file-card-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+      flex: 1;
+    }
+
+    .collapse-toggle {
+      width: 24px;
+      height: 24px;
+      border-radius: 4px;
+      border: none;
+      background: transparent;
+      color: var(--text-secondary);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      flex-shrink: 0;
+      transition: transform var(--transition-fast), background var(--transition-fast);
+    }
+
+    .collapse-toggle:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    .file-card.collapsed .collapse-toggle svg {
+      transform: rotate(-90deg);
+    }
+
+    .file-path-display {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      color: var(--text-primary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .file-path-dir {
+      color: var(--text-secondary);
+    }
+
+    .file-path-name {
+      font-weight: 700;
+    }
+
+    .file-card-right {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-shrink: 0;
+    }
+
+    .file-stats-badge {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .file-card-body {
+      overflow-x: auto;
+      background: var(--bg-canvas);
+    }
+
+    .file-card.collapsed .file-card-body {
+      display: none;
+    }
+
+    /* Diff Table Core */
+    .diff-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-family: var(--font-mono);
+      font-size: 12.5px;
+      line-height: 20px;
+      table-layout: fixed;
+    }
+
+    .diff-table.unified col.col-num { width: 50px; }
+    .diff-table.unified col.col-sign { width: 24px; }
+    .diff-table.unified col.col-code { width: auto; }
+
+    .diff-table.split col.col-num { width: 48px; }
+    .diff-table.split col.col-sign { width: 22px; }
+    .diff-table.split col.col-code { width: calc(50% - 70px); }
+
+    .diff-row td {
+      padding: 0;
+      vertical-align: top;
+    }
+
+    .line-num {
+      text-align: right;
+      padding: 0 8px !important;
+      color: var(--text-muted);
+      user-select: none;
+      font-size: 11.5px;
+      border-right: 1px solid var(--border-muted);
+      background: var(--bg-surface);
+    }
+
+    .line-sign {
+      text-align: center;
+      user-select: none;
+      font-weight: 600;
+    }
+
+    .line-code {
+      padding: 0 12px 0 4px !important;
+      white-space: pre;
+      overflow-x: hidden;
+    }
+
+    .wrap-lines .line-code {
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    .split-divider {
+      border-left: 1px solid var(--border-default);
+    }
+
+    .row-hunk td {
+      background: var(--diff-hunk-bg);
+      color: var(--diff-hunk-text);
+      padding-top: 4px;
+      padding-bottom: 4px;
+    }
+    .row-hunk .line-num {
+      background: var(--diff-hunk-num-bg);
+      color: var(--diff-hunk-text);
+    }
+    .hunk-header-cell {
+      padding: 4px 12px !important;
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .row-add td.cell-add,
+    .row-add.unified td {
+      background: var(--diff-add-bg);
+    }
+    .row-add .line-num.cell-add,
+    .row-add.unified .line-num {
+      background: var(--diff-add-num-bg);
+      color: var(--diff-add-text);
+    }
+    .row-add .line-sign.cell-add,
+    .row-add.unified .line-sign {
+      color: var(--diff-add-text);
+    }
+
+    .row-del td.cell-del,
+    .row-del.unified td {
+      background: var(--diff-del-bg);
+    }
+    .row-del .line-num.cell-del,
+    .row-del.unified .line-num {
+      background: var(--diff-del-num-bg);
+      color: var(--diff-del-text);
+    }
+    .row-del .line-sign.cell-del,
+    .row-del.unified .line-sign {
+      color: var(--diff-del-text);
+    }
+
+    td.cell-empty {
+      background: var(--diff-empty-bg);
+    }
+
+    .word-add {
+      background: var(--diff-add-word);
+      border-radius: 3px;
+      padding: 1px 0;
+    }
+    .word-del {
+      background: var(--diff-del-word);
+      border-radius: 3px;
+      padding: 1px 0;
+    }
+
+    .tok-comment { color: var(--syn-comment); font-style: italic; }
+    .tok-keyword { color: var(--syn-keyword); font-weight: 500; }
+    .tok-string  { color: var(--syn-string); }
+    .tok-number  { color: var(--syn-number); }
+    .tok-preproc { color: var(--syn-preproc); }
+
+    /* ==========================================================================
+       7. Modal & Toast & Overlay
+       ========================================================================== */
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(31, 35, 40, 0.5);
+      backdrop-filter: blur(4px);
+      z-index: 100;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
+
+    .modal-backdrop.open {
+      display: flex;
+    }
+
+    .modal-dialog {
+      width: 100%;
+      max-width: 720px;
+      background: var(--bg-canvas);
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-lg);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      animation: modalIn 180ms ease-out;
+    }
+
+    @keyframes modalIn {
+      from { opacity: 0; transform: translateY(10px) scale(0.98); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+
+    .modal-header {
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border-default);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-weight: 600;
+      font-size: 15px;
+    }
+
+    .modal-body {
+      padding: 16px 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .paste-textarea {
+      width: 100%;
+      height: 300px;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-sm);
+      padding: 12px;
+      font-family: var(--font-mono);
+      font-size: 12.5px;
+      line-height: 1.5;
+      resize: vertical;
+      outline: none;
+    }
+
+    .paste-textarea:focus {
+      border-color: var(--accent-primary);
+      box-shadow: 0 0 0 2px var(--accent-subtle);
+    }
+
+    .modal-footer {
+      padding: 12px 18px;
+      border-top: 1px solid var(--border-default);
+      background: var(--bg-surface);
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    .drag-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(255, 255, 255, 0.75);
+      backdrop-filter: blur(6px);
+      z-index: 200;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      pointer-events: none;
+    }
+
+    [data-theme="dark"] .drag-overlay {
+      background: rgba(13, 17, 23, 0.82);
+    }
+
+    .drag-overlay.active {
+      display: flex;
+    }
+
+    .drag-overlay-box {
+      border: 2px dashed var(--accent-primary);
+      background: var(--bg-canvas);
+      padding: 40px 64px;
+      border-radius: var(--radius-lg);
+      text-align: center;
+      box-shadow: var(--shadow-lg);
+    }
+
+    .toast {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      background: var(--text-primary);
+      border: 1px solid var(--text-primary);
+      color: var(--bg-canvas);
+      padding: 10px 16px;
+      border-radius: var(--radius-md);
+      box-shadow: var(--shadow-md);
+      font-size: 13px;
+      font-weight: 500;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      z-index: 150;
+      opacity: 0;
+      transform: translateY(12px);
+      pointer-events: none;
+      transition: all 200ms ease;
+    }
+
+    .toast.show {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    @media (max-width: 960px) {
+      .sidebar {
+        position: fixed;
+        left: 0;
+        top: var(--header-height);
+        box-shadow: var(--shadow-lg);
+      }
+      .patch-badge {
+        max-width: 180px;
+      }
+      .hide-mobile {
+        display: none !important;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <input type="file" id="fileInput" accept=".patch,.diff,.txt" hidden />
+
+  <header class="topbar">
+    <div class="topbar-left">
+      <button class="btn btn-icon" id="toggleSidebarBtn" title="切換檔案側邊欄">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/></svg>
+      </button>
+
+      <div class="brand">
+        <div class="brand-icon">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><line x1="6" x2="6" y1="9" y2="21"/></svg>
+        </div>
+        <span>PatchLens</span>
+      </div>
+
+      <div class="patch-badge empty" id="patchFileNameBadge" title="尚未載入 Patch">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
+        <span id="patchFileNameText">尚未載入 Patch</span>
+      </div>
+    </div>
+
+    <div class="topbar-center hide-mobile">
+      <div class="stats-pill" id="globalStatsPill">
+        <span class="stat-files" id="statFilesCount">0 個檔案變更</span>
+        <span class="stat-add" id="statAddCount">+0</span>
+        <span class="stat-del" id="statDelCount">-0</span>
+        <div class="diff-bar" id="globalDiffBar"></div>
+      </div>
+    </div>
+
+    <div class="topbar-right">
+      <div class="segmented-group" role="group" aria-label="檢視模式切換">
+        <button class="segmented-btn active" id="viewSplitBtn" data-mode="split">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M12 3v18"/></svg>
+          <span>並排對比 (Split)</span>
+        </button>
+        <button class="segmented-btn" id="viewUnifiedBtn" data-mode="unified">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 12h18"/></svg>
+          <span>單欄檢視 (Unified)</span>
+        </button>
+      </div>
+
+      <button class="btn btn-icon" id="themeToggleBtn" title="切換深色 / 淺色主題">
+        <svg id="sunIcon" style="display:none" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
+        <svg id="moonIcon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="workspace">
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-header">
+        <div class="sidebar-title-row">
+          <span>變更檔案列表</span>
+          <span id="sidebarFileCountBadge">0</span>
+        </div>
+        <div class="search-box">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+          <input type="text" class="search-input" id="fileFilterInput" placeholder="篩選檔案路徑或名稱..." />
+          <button class="search-clear" id="clearFilterBtn" title="清除篩選">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="file-tree" id="fileTreeList">
+        <div style="padding: 20px 12px; text-align: center; color: var(--text-muted); font-size: 12.5px;">
+          尚未載入任何檔案
+        </div>
+      </div>
+    </aside>
+
+    <main class="main-content">
+      <section class="upload-strip" id="dropZoneStrip">
+        <div class="upload-strip-info">
+          <div class="upload-icon-circle">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
+          </div>
+          <div>
+            <div style="font-weight: 600; font-size: 13.5px;">拖曳 Patch / Diff 檔案至此處，或點擊上傳</div>
+            <div style="font-size: 12px; color: var(--text-secondary);">支援 <code style="font-family:var(--font-mono)">.patch</code>、<code style="font-family:var(--font-mono)">.diff</code>、<code style="font-family:var(--font-mono)">.txt</code> 格式，所有解析皆在瀏覽器本地端即時完成</div>
+          </div>
+        </div>
+
+        <div class="upload-strip-actions">
+          <button class="btn btn-primary" id="uploadBtn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
+            上傳 Patch 檔案
+          </button>
+          <button class="btn" id="openPasteModalBtn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg>
+            貼上 Diff 文字
+          </button>
+          <button class="btn btn-success" id="downloadHtmlBtn" disabled title="下載目前檢視為獨立的 HTML 報告">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+            下載 Diff HTML
+          </button>
+        </div>
+      </section>
+
+      <div class="diff-controls-bar" id="diffControlsBar" style="display:none;">
+        <div class="diff-controls-left">
+          <button class="btn" id="expandAllBtn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="7 13 12 18 17 13"/><polyline points="7 6 12 11 17 6"/></svg>
+            展開全部
+          </button>
+          <button class="btn" id="collapseAllBtn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="17 11 12 6 7 11"/><polyline points="17 18 12 13 7 18"/></svg>
+            收合全部
+          </button>
+          <button class="btn" id="toggleWrapBtn" aria-pressed="false">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" x2="21" y1="6" y2="6"/><path d="M3 12h15a3 3 0 1 1 0 6h-4"/><polyline points="16 16 14 18 16 20"/><line x1="3" x2="10" y1="18" y2="18"/></svg>
+            <span id="wrapBtnText">自動換行：關閉</span>
+          </button>
+        </div>
+
+        <div class="diff-controls-right" style="font-size: 12px; color: var(--text-secondary);">
+          <span>提示：支援字元級差異高亮 (Inline Word Diff) 與語法著色</span>
+        </div>
+      </div>
+
+      <div class="diff-files-container" id="diffFilesContainer">
+        <div class="empty-state">
+          <div class="empty-state-icon">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="9" x2="15" y1="13" y2="13"/><line x1="9" x2="15" y1="17" y2="17"/></svg>
+          </div>
+          <div class="empty-state-title">尚未載入 Patch 檔案</div>
+          <div class="empty-state-desc">請使用上方「上傳 Patch 檔案」按鈕，或將 <code style="font-family:var(--font-mono)">.patch</code> / <code style="font-family:var(--font-mono)">.diff</code> 檔案拖曳至此頁面，即可開始檢視差異。</div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <div class="modal-backdrop" id="pasteModal">
+    <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <div class="modal-header">
+        <span id="modalTitle">貼上 Raw Git Diff / Patch 內容</span>
+        <button class="btn btn-icon" id="closePasteModalBtn" style="border:none;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div style="font-size: 12.5px; color: var(--text-secondary);">
+          請貼上由 <code style="font-family:var(--font-mono)">git diff</code> 或 <code style="font-family:var(--font-mono)">git format-patch</code> 產生的統一差異格式 (Unified Diff) 內容：
+        </div>
+        <textarea class="paste-textarea" id="pasteTextarea" placeholder="diff --git a/path/to/file.c b/path/to/file.c&#10;--- a/path/to/file.c&#10;+++ b/path/to/file.c&#10;@@ -10,4 +10,5 @@ ..."></textarea>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" id="cancelPasteBtn">取消</button>
+        <button class="btn btn-primary" id="applyPasteBtn">解析並顯示對比</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="drag-overlay" id="dragOverlay">
+    <div class="drag-overlay-box">
+      <div style="color: var(--accent-primary); margin-bottom: 10px;">
+        <svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
+      </div>
+      <div style="font-size: 17px; font-weight: 700; margin-bottom: 4px;">放開滑鼠以上傳 Patch 檔案</div>
+      <div style="font-size: 13px; color: var(--text-secondary);">立即產生並排與單欄程式碼對比視圖</div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    /* ==========================================================================
+       1. Application State
+       ========================================================================== */
+    const state = {
+      fileName: '',
+      parsedFiles: [],
+      viewMode: 'split',
+      wrapLines: false,
+      filterQuery: '',
+      collapsedFiles: new Set(),
+      activeFileId: null
+    };
+
+    /* ==========================================================================
+       2. Unified Diff Parser Engine
+       ========================================================================== */
+    function parsePatch(rawText) {
+      // 去除 UTF-8 BOM，並統一換行符
+      let normalized = rawText.replace(/\r\n/g, '\n');
+      if (normalized.charCodeAt(0) === 0xFEFF) {
+        normalized = normalized.slice(1);
+      }
+      const lines = normalized.split('\n');
+      const files = [];
+      let currentFile = null;
+      let currentHunk = null;
+      let oldLine = 0;
+      let newLine = 0;
+
+      const finishHunk = () => {
+        if (currentHunk && currentFile) {
+          currentFile.hunks.push(currentHunk);
+          currentHunk = null;
+        }
+      };
+
+      const finishFile = () => {
+        finishHunk();
+        if (currentFile) {
+          files.push(currentFile);
+          currentFile = null;
+        }
+      };
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+
+        if (line.startsWith('diff --git ')) {
+          finishFile();
+          const match = line.match(/^diff --git a\/(.+?) b\/(.+)$/);
+          const path = match ? match[2] : line.replace('diff --git ', '').trim();
+          currentFile = {
+            id: `file-${files.length}`,
+            path,
+            oldPath: match ? match[1] : path,
+            indexInfo: '',
+            additions: 0,
+            deletions: 0,
+            hunks: []
+          };
+          continue;
+        }
+
+        if (!currentFile && line.startsWith('--- ')) {
+          const path = line.replace(/^---\s+(a\/)?/, '').trim();
+          currentFile = {
+            id: `file-${files.length}`,
+            path,
+            oldPath: path,
+            indexInfo: '',
+            additions: 0,
+            deletions: 0,
+            hunks: []
+          };
+          continue;
+        }
+
+        if (!currentFile) continue;
+
+        if (line.startsWith('index ')) {
+          currentFile.indexInfo = line.replace('index ', '').trim();
+          continue;
+        }
+
+        if (line.startsWith('--- ')) {
+          const p = line.replace(/^---\s+(a\/)?/, '').trim();
+          if (p !== '/dev/null') currentFile.oldPath = p;
+          continue;
+        }
+
+        if (line.startsWith('+++ ')) {
+          const p = line.replace(/^\+\+\+\s+(b\/)?/, '').trim();
+          if (p !== '/dev/null') currentFile.path = p;
+          continue;
+        }
+
+        if (line.startsWith('@@ ')) {
+          finishHunk();
+          const hunkMatch = line.match(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$/);
+          if (hunkMatch) {
+            oldLine = parseInt(hunkMatch[1], 10);
+            newLine = parseInt(hunkMatch[3], 10);
+            currentHunk = {
+              header: line,
+              context: (hunkMatch[5] || '').trim(),
+              lines: []
+            };
+          }
+          continue;
+        }
+
+        if (currentHunk) {
+          if (line.startsWith('+')) {
+            currentHunk.lines.push({
+              type: 'add',
+              oldNum: null,
+              newNum: newLine++,
+              content: line.slice(1)
+            });
+            currentFile.additions++;
+          } else if (line.startsWith('-')) {
+            currentHunk.lines.push({
+              type: 'del',
+              oldNum: oldLine++,
+              newNum: null,
+              content: line.slice(1)
+            });
+            currentFile.deletions++;
+          } else if (line.startsWith('\\ No newline at end of file')) {
+            // Ignore meta marker
+          } else {
+            if (i === lines.length - 1 && line === '') continue;
+            const content = line.startsWith(' ') ? line.slice(1) : line;
+            currentHunk.lines.push({
+              type: 'context',
+              oldNum: oldLine++,
+              newNum: newLine++,
+              content
+            });
+          }
+        }
+      }
+
+      finishFile();
+      return files;
+    }
+
+    /* ==========================================================================
+       3. Syntax Highlighting & Word-Level Inline Diff
+       ========================================================================== */
+    function escapeHtml(str) {
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+    }
+
+    function highlightSyntax(rawCode, ext) {
+      const escaped = escapeHtml(rawCode);
+      if (!escaped.trim()) return escaped || ' ';
+
+      const tokenRegex = /(\/\/.*$|\/\*[\s\S]*?\*\/|#.*$)|(&quot;.*?&quot;|"(?:\\.|[^"\\])*")|(\b(?:if|else|for|while|return|continue|break|switch|case|default|void|int|uint8_t|uint16_t|uint32_t|UINT8|UINT16|UINT32|UINTN|BOOLEAN|EFI_STATUS|STATIC|CONST|struct|enum|typedef|TRUE|FALSE|NULL)\b)|(\b0x[0-9a-fA-F]+\b|\b\d+\b)/g;
+
+      return escaped.replace(tokenRegex, (match, commentOrPreproc, strLit, keyword, num) => {
+        if (commentOrPreproc) {
+          if (commentOrPreproc.startsWith('#') && (ext === 'c' || ext === 'h')) {
+            return `<span class="tok-preproc">${commentOrPreproc}</span>`;
+          }
+          return `<span class="tok-comment">${commentOrPreproc}</span>`;
+        }
+        if (strLit) return `<span class="tok-string">${strLit}</span>`;
+        if (keyword) return `<span class="tok-keyword">${keyword}</span>`;
+        if (num) return `<span class="tok-number">${num}</span>`;
+        return match;
+      });
+    }
+
+    function computeInlineWordDiff(oldStr, newStr, ext) {
+      if (!oldStr.trim() || !newStr.trim()) {
+        return {
+          oldHtml: highlightSyntax(oldStr, ext),
+          newHtml: highlightSyntax(newStr, ext)
+        };
+      }
+
+      let prefixLen = 0;
+      const minLen = Math.min(oldStr.length, newStr.length);
+      while (prefixLen < minLen && oldStr[prefixLen] === newStr[prefixLen]) {
+        prefixLen++;
+      }
+
+      let suffixLen = 0;
+      while (
+        suffixLen < (minLen - prefixLen) &&
+        oldStr[oldStr.length - 1 - suffixLen] === newStr[newStr.length - 1 - suffixLen]
+      ) {
+        suffixLen++;
+      }
+
+      const oldMid = oldStr.slice(prefixLen, oldStr.length - suffixLen);
+      const newMid = newStr.slice(prefixLen, newStr.length - suffixLen);
+
+      const sharedRatio = (prefixLen + suffixLen) / Math.max(oldStr.length, newStr.length);
+      if (sharedRatio < 0.25 || (!oldMid && !newMid)) {
+        return {
+          oldHtml: highlightSyntax(oldStr, ext),
+          newHtml: highlightSyntax(newStr, ext)
+        };
+      }
+
+      const oldPrefix = highlightSyntax(oldStr.slice(0, prefixLen), ext);
+      const oldSuffix = highlightSyntax(oldStr.slice(oldStr.length - suffixLen), ext);
+      const newPrefix = highlightSyntax(newStr.slice(0, prefixLen), ext);
+      const newSuffix = highlightSyntax(newStr.slice(newStr.length - suffixLen), ext);
+
+      const oldMidHtml = oldMid ? `<span class="word-del">${escapeHtml(oldMid)}</span>` : '';
+      const newMidHtml = newMid ? `<span class="word-add">${escapeHtml(newMid)}</span>` : '';
+
+      return {
+        oldHtml: oldPrefix + oldMidHtml + oldSuffix,
+        newHtml: newPrefix + newMidHtml + newSuffix
+      };
+    }
+
+    function buildPairedRows(hunkLines, ext) {
+      const rows = [];
+      let i = 0;
+
+      while (i < hunkLines.length) {
+        const line = hunkLines[i];
+
+        if (line.type === 'context') {
+          const html = highlightSyntax(line.content, ext);
+          rows.push({
+            kind: 'context',
+            left: { num: line.oldNum, sign: ' ', html, raw: line.content },
+            right: { num: line.newNum, sign: ' ', html, raw: line.content }
+          });
+          i++;
+        } else {
+          const dels = [];
+          const adds = [];
+          while (i < hunkLines.length && (hunkLines[i].type === 'del' || hunkLines[i].type === 'add')) {
+            if (hunkLines[i].type === 'del') dels.push(hunkLines[i]);
+            else adds.push(hunkLines[i]);
+            i++;
+          }
+
+          const maxPairs = Math.max(dels.length, adds.length);
+          for (let p = 0; p < maxPairs; p++) {
+            const d = dels[p] || null;
+            const a = adds[p] || null;
+
+            if (d && a) {
+              const inline = computeInlineWordDiff(d.content, a.content, ext);
+              rows.push({
+                kind: 'change',
+                left: { num: d.oldNum, sign: '-', html: inline.oldHtml, raw: d.content, type: 'del' },
+                right: { num: a.newNum, sign: '+', html: inline.newHtml, raw: a.content, type: 'add' }
+              });
+            } else if (d) {
+              rows.push({
+                kind: 'change',
+                left: { num: d.oldNum, sign: '-', html: highlightSyntax(d.content, ext), raw: d.content, type: 'del' },
+                right: null
+              });
+            } else if (a) {
+              rows.push({
+                kind: 'change',
+                left: null,
+                right: { num: a.newNum, sign: '+', html: highlightSyntax(a.content, ext), raw: a.content, type: 'add' }
+              });
+            }
+          }
+        }
+      }
+
+      return rows;
+    }
+
+    /* ==========================================================================
+       4. UI Rendering Helpers
+       ========================================================================== */
+    function getFileExtension(path) {
+      const parts = path.split('.');
+      return parts.length > 1 ? parts.pop().toLowerCase() : '';
+    }
+
+    function getExtBadgeClass(ext) {
+      if (ext === 'c' || ext === 'cpp') return 'ext-c';
+      if (ext === 'h' || ext === 'hpp') return 'ext-h';
+      if (ext === 'dsc' || ext === 'inf' || ext === 'dec') return 'ext-dsc';
+      return 'ext-default';
+    }
+
+    function splitPath(fullPath) {
+      const idx = fullPath.lastIndexOf('/');
+      if (idx === -1) return { dir: '', name: fullPath };
+      return {
+        dir: fullPath.slice(0, idx + 1),
+        name: fullPath.slice(idx + 1)
+      };
+    }
+
+    function renderDiffBar(additions, deletions, blocks = 5) {
+      const total = additions + deletions;
+      if (total === 0) {
+        return Array(blocks).fill('<span class="diff-bar-block neutral"></span>').join('');
+      }
+      const addBlocks = Math.round((additions / total) * blocks);
+      const delBlocks = Math.min(blocks - addBlocks, Math.round((deletions / total) * blocks));
+      const neutralBlocks = Math.max(0, blocks - addBlocks - delBlocks);
+
+      return (
+        '<span class="diff-bar-block add"></span>'.repeat(addBlocks) +
+        '<span class="diff-bar-block del"></span>'.repeat(delBlocks) +
+        '<span class="diff-bar-block neutral"></span>'.repeat(neutralBlocks)
+      );
+    }
+
+    function renderGlobalStats() {
+      const files = state.parsedFiles;
+      const totalAdd = files.reduce((acc, f) => acc + f.additions, 0);
+      const totalDel = files.reduce((acc, f) => acc + f.deletions, 0);
+
+      const fileNameEl = document.getElementById('patchFileNameText');
+      const fileNameBadge = document.getElementById('patchFileNameBadge');
+      if (state.fileName) {
+        fileNameEl.textContent = state.fileName;
+        fileNameBadge.title = state.fileName;
+        fileNameBadge.classList.remove('empty');
+      } else {
+        fileNameEl.textContent = '尚未載入 Patch';
+        fileNameBadge.title = '尚未載入 Patch';
+        fileNameBadge.classList.add('empty');
+      }
+      document.getElementById('statFilesCount').textContent = `${files.length} 個檔案變更`;
+      document.getElementById('statAddCount').textContent = `+${totalAdd}`;
+      document.getElementById('statDelCount').textContent = `-${totalDel}`;
+      document.getElementById('globalDiffBar').innerHTML = renderDiffBar(totalAdd, totalDel, 6);
+    }
+
+    function renderSidebar() {
+      const listEl = document.getElementById('fileTreeList');
+      const query = state.filterQuery.trim().toLowerCase();
+      const filtered = state.parsedFiles.filter(f => f.path.toLowerCase().includes(query));
+
+      document.getElementById('sidebarFileCountBadge').textContent = filtered.length;
+
+      if (state.parsedFiles.length === 0) {
+        listEl.innerHTML = `<div style="padding: 20px 12px; text-align: center; color: var(--text-muted); font-size: 12.5px;">尚未載入任何檔案</div>`;
+        return;
+      }
+
+      if (filtered.length === 0) {
+        listEl.innerHTML = `<div style="padding: 20px 12px; text-align: center; color: var(--text-muted); font-size: 12.5px;">找不到符合「${escapeHtml(state.filterQuery)}」的檔案</div>`;
+        return;
+      }
+
+      listEl.innerHTML = filtered.map(file => {
+        const ext = getFileExtension(file.path);
+        const { dir, name } = splitPath(file.path);
+        const isActive = state.activeFileId === file.id;
+
+        return `
+          <div class="tree-item ${isActive ? 'active' : ''}" data-target="${file.id}" title="${escapeHtml(file.path)}">
+            <span class="ext-badge ${getExtBadgeClass(ext)}">.${escapeHtml(ext || 'txt')}</span>
+            <div class="tree-item-info">
+              <div class="tree-item-name">${escapeHtml(name)}</div>
+              <div class="tree-item-dir">${escapeHtml(dir)}</div>
+            </div>
+            <div class="tree-item-stats">
+              ${file.additions > 0 ? `<span class="stat-add">+${file.additions}</span>` : ''}
+              ${file.deletions > 0 ? `<span class="stat-del">-${file.deletions}</span>` : ''}
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      listEl.querySelectorAll('.tree-item').forEach(item => {
+        item.addEventListener('click', () => {
+          const targetId = item.getAttribute('data-target');
+          state.activeFileId = targetId;
+          if (state.collapsedFiles.has(targetId)) {
+            state.collapsedFiles.delete(targetId);
+            renderDiffCards();
+          }
+          renderSidebar();
+          const cardEl = document.getElementById(targetId);
+          if (cardEl) {
+            cardEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }
+        });
+      });
+    }
+
+    function renderSplitTable(file, ext, options = {}) {
+      const showCopyBtn = options.showCopyBtn !== false;
+      let bodyHtml = '';
+
+      file.hunks.forEach((hunk, hunkIdx) => {
+        const pairedRows = buildPairedRows(hunk.lines, ext);
+
+        bodyHtml += `
+          <tr class="diff-row row-hunk">
+            <td class="line-num">...</td>
+            <td colspan="5">
+              <div class="hunk-header-cell">
+                <span>${escapeHtml(hunk.header)}</span>
+                ${showCopyBtn ? `<button class="btn copy-hunk-btn" style="height:22px; font-size:11px; padding:0 8px;" data-file="${file.id}" data-hunk="${hunkIdx}" title="複製此區塊的新版程式碼">複製新碼</button>` : ''}
+              </div>
+            </td>
+          </tr>
+        `;
+
+        pairedRows.forEach(row => {
+          if (row.kind === 'context') {
+            bodyHtml += `
+              <tr class="diff-row">
+                <td class="line-num">${row.left.num}</td>
+                <td class="line-sign"> </td>
+                <td class="line-code">${row.left.html || ' '}</td>
+                <td class="line-num split-divider">${row.right.num}</td>
+                <td class="line-sign"> </td>
+                <td class="line-code">${row.right.html || ' '}</td>
+              </tr>
+            `;
+          } else {
+            const leftHtml = row.left
+              ? `<td class="line-num cell-del">${row.left.num}</td>
+                 <td class="line-sign cell-del">-</td>
+                 <td class="line-code cell-del">${row.left.html || ' '}</td>`
+              : `<td class="line-num cell-empty"></td>
+                 <td class="line-sign cell-empty"></td>
+                 <td class="line-code cell-empty"></td>`;
+
+            const rightHtml = row.right
+              ? `<td class="line-num split-divider cell-add">${row.right.num}</td>
+                 <td class="line-sign cell-add">+</td>
+                 <td class="line-code cell-add">${row.right.html || ' '}</td>`
+              : `<td class="line-num split-divider cell-empty"></td>
+                 <td class="line-sign cell-empty"></td>
+                 <td class="line-code cell-empty"></td>`;
+
+            const rowClass = row.left && row.right ? 'row-del row-add' : row.left ? 'row-del' : 'row-add';
+            bodyHtml += `<tr class="diff-row ${rowClass}">${leftHtml}${rightHtml}</tr>`;
+          }
+        });
+      });
+
+      return `
+        <table class="diff-table split ${state.wrapLines ? 'wrap-lines' : ''}">
+          <colgroup>
+            <col class="col-num" /><col class="col-sign" /><col class="col-code" />
+            <col class="col-num" /><col class="col-sign" /><col class="col-code" />
+          </colgroup>
+          <tbody>${bodyHtml}</tbody>
+        </table>
+      `;
+    }
+
+    function renderUnifiedTable(file, ext, options = {}) {
+      const showCopyBtn = options.showCopyBtn !== false;
+      let bodyHtml = '';
+
+      file.hunks.forEach((hunk, hunkIdx) => {
+        const pairedRows = buildPairedRows(hunk.lines, ext);
+
+        bodyHtml += `
+          <tr class="diff-row row-hunk">
+            <td class="line-num">...</td>
+            <td class="line-num">...</td>
+            <td colspan="2">
+              <div class="hunk-header-cell">
+                <span>${escapeHtml(hunk.header)}</span>
+                ${showCopyBtn ? `<button class="btn copy-hunk-btn" style="height:22px; font-size:11px; padding:0 8px;" data-file="${file.id}" data-hunk="${hunkIdx}" title="複製此區塊的新版程式碼">複製新碼</button>` : ''}
+              </div>
+            </td>
+          </tr>
+        `;
+
+        const unifiedEntries = [];
+        let pendingAdds = [];
+
+        const flushAdds = () => {
+          pendingAdds.forEach(a => unifiedEntries.push(a));
+          pendingAdds = [];
+        };
+
+        pairedRows.forEach(row => {
+          if (row.kind === 'context') {
+            flushAdds();
+            unifiedEntries.push({ type: 'context', oldNum: row.left.num, newNum: row.right.num, sign: ' ', html: row.left.html });
+          } else {
+            if (row.left) {
+              unifiedEntries.push({ type: 'del', oldNum: row.left.num, newNum: '', sign: '-', html: row.left.html });
+            }
+            if (row.right) {
+              pendingAdds.push({ type: 'add', oldNum: '', newNum: row.right.num, sign: '+', html: row.right.html });
+            }
+          }
+        });
+        flushAdds();
+
+        unifiedEntries.forEach(entry => {
+          const rowCls = entry.type === 'add' ? 'row-add unified' : entry.type === 'del' ? 'row-del unified' : '';
+          bodyHtml += `
+            <tr class="diff-row ${rowCls}">
+              <td class="line-num">${entry.oldNum}</td>
+              <td class="line-num">${entry.newNum}</td>
+              <td class="line-sign">${entry.sign}</td>
+              <td class="line-code">${entry.html || ' '}</td>
+            </tr>
+          `;
+        });
+      });
+
+      return `
+        <table class="diff-table unified ${state.wrapLines ? 'wrap-lines' : ''}">
+          <colgroup>
+            <col class="col-num" /><col class="col-num" /><col class="col-sign" /><col class="col-code" />
+          </colgroup>
+          <tbody>${bodyHtml}</tbody>
+        </table>
+      `;
+    }
+
+    function renderDiffCards() {
+      const container = document.getElementById('diffFilesContainer');
+
+      if (state.parsedFiles.length === 0) {
+        container.innerHTML = `
+          <div class="empty-state">
+            <div class="empty-state-icon">
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="9" x2="15" y1="13" y2="13"/><line x1="9" x2="15" y1="17" y2="17"/></svg>
+            </div>
+            <div class="empty-state-title">尚未載入 Patch 檔案</div>
+            <div class="empty-state-desc">請使用上方「上傳 Patch 檔案」按鈕，或將 <code style="font-family:var(--font-mono)">.patch</code> / <code style="font-family:var(--font-mono)">.diff</code> 檔案拖曳至此頁面，即可開始檢視差異。</div>
+          </div>
+        `;
+        return;
+      }
+
+      const query = state.filterQuery.trim().toLowerCase();
+      const filtered = state.parsedFiles.filter(f => f.path.toLowerCase().includes(query));
+
+      if (filtered.length === 0) {
+        container.innerHTML = `
+          <div class="empty-state">
+            <div class="empty-state-title">沒有符合條件的檔案</div>
+            <div class="empty-state-desc">請嘗試清除搜尋條件，或重新上傳有效的 Patch / Diff 檔案。</div>
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = filtered.map(file => {
+        const ext = getFileExtension(file.path);
+        const { dir, name } = splitPath(file.path);
+        const isCollapsed = state.collapsedFiles.has(file.id);
+        const tableHtml = state.viewMode === 'split'
+          ? renderSplitTable(file, ext)
+          : renderUnifiedTable(file, ext);
+
+        return `
+          <article class="file-card ${isCollapsed ? 'collapsed' : ''}" id="${file.id}">
+            <header class="file-card-header">
+              <div class="file-card-left">
+                <button class="collapse-toggle" data-toggle-file="${file.id}" title="展開 / 收合此檔案">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="6 9 12 15 18 9"/></svg>
+                </button>
+                <span class="ext-badge ${getExtBadgeClass(ext)}">.${escapeHtml(ext || 'txt')}</span>
+                <div class="file-path-display" title="${escapeHtml(file.path)}">
+                  <span class="file-path-dir">${escapeHtml(dir)}</span><span class="file-path-name">${escapeHtml(name)}</span>
+                </div>
+                <button class="btn btn-icon copy-path-btn" style="width:26px; height:26px; border:none;" data-path="${escapeHtml(file.path)}" title="複製檔案路徑">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+                </button>
+              </div>
+
+              <div class="file-card-right">
+                <div class="file-stats-badge">
+                  <span class="stat-add">+${file.additions}</span>
+                  <span class="stat-del">-${file.deletions}</span>
+                  <div class="diff-bar hide-mobile">${renderDiffBar(file.additions, file.deletions, 5)}</div>
+                </div>
+              </div>
+            </header>
+            <div class="file-card-body">
+              ${tableHtml}
+            </div>
+          </article>
+        `;
+      }).join('');
+
+      bindCardEvents();
+    }
+
+    function bindCardEvents() {
+      document.querySelectorAll('[data-toggle-file]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const id = btn.getAttribute('data-toggle-file');
+          if (state.collapsedFiles.has(id)) {
+            state.collapsedFiles.delete(id);
+          } else {
+            state.collapsedFiles.add(id);
+          }
+          renderDiffCards();
+        });
+      });
+
+      document.querySelectorAll('.copy-path-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          copyToClipboard(btn.getAttribute('data-path'), '已複製檔案路徑！');
+        });
+      });
+
+      document.querySelectorAll('.copy-hunk-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const fileId = btn.getAttribute('data-file');
+          const hunkIdx = parseInt(btn.getAttribute('data-hunk'), 10);
+          const file = state.parsedFiles.find(f => f.id === fileId);
+          if (file && file.hunks[hunkIdx]) {
+            const newCode = file.hunks[hunkIdx].lines
+              .filter(l => l.type !== 'del')
+              .map(l => l.content)
+              .join('\n');
+            copyToClipboard(newCode, '已複製此區塊的新版程式碼！');
+          }
+        });
+      });
+    }
+
+    /* ==========================================================================
+       5. Load / Reset / Download
+       ========================================================================== */
+    function loadPatchData(name, content) {
+      const files = parsePatch(content);
+      if (files.length === 0) {
+        showToast('無法解析 Patch 內容，請確認格式是否為標準 Unified Diff');
+        return false;
+      }
+
+      state.fileName = name;
+      state.parsedFiles = files;
+      state.collapsedFiles.clear();
+      state.activeFileId = files[0].id;
+
+      document.getElementById('diffControlsBar').style.display = 'flex';
+      document.getElementById('downloadHtmlBtn').disabled = false;
+
+      renderGlobalStats();
+      renderSidebar();
+      renderDiffCards();
+      return true;
+    }
+
+    function downloadDiffHtml() {
+      if (state.parsedFiles.length === 0) {
+        showToast('請先上傳 Patch 檔案');
+        return;
+      }
+
+      const titleBase = state.fileName.replace(/\.(patch|diff|txt)$/i, '');
+      const totalAdd = state.parsedFiles.reduce((acc, f) => acc + f.additions, 0);
+      const totalDel = state.parsedFiles.reduce((acc, f) => acc + f.deletions, 0);
+      const now = new Date();
+      const timeStr = now.getFullYear() + '-' +
+        String(now.getMonth() + 1).padStart(2, '0') + '-' +
+        String(now.getDate()).padStart(2, '0') + ' ' +
+        String(now.getHours()).padStart(2, '0') + ':' +
+        String(now.getMinutes()).padStart(2, '0') + ':' +
+        String(now.getSeconds()).padStart(2, '0');
+
+      let cardsHtml = '';
+      state.parsedFiles.forEach(file => {
+        const ext = getFileExtension(file.path);
+        const { dir, name } = splitPath(file.path);
+        const tableHtml = state.viewMode === 'split'
+          ? renderSplitTable(file, ext, { showCopyBtn: false })
+          : renderUnifiedTable(file, ext, { showCopyBtn: false });
+
+        cardsHtml += `
+          <article class="file-card">
+            <header class="file-card-header">
+              <div class="file-card-left">
+                <span class="ext-badge ${getExtBadgeClass(ext)}">.${escapeHtml(ext || 'txt')}</span>
+                <div class="file-path-display">
+                  <span class="file-path-dir">${escapeHtml(dir)}</span><span class="file-path-name">${escapeHtml(name)}</span>
+                </div>
+              </div>
+              <div class="file-stats-badge">
+                <span class="stat-add">+${file.additions}</span>
+                <span class="stat-del">-${file.deletions}</span>
+              </div>
+            </header>
+            <div class="file-card-body">${tableHtml}</div>
+          </article>
+        `;
+      });
+
+      const css = `
+        :root {
+          --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft JhengHei", Roboto, sans-serif;
+          --font-mono: 'JetBrains Mono', 'Fira Code', Consolas, 'Courier New', monospace;
+          --bg-canvas: #ffffff;
+          --bg-surface: #f6f8fa;
+          --border-default: #d0d7de;
+          --border-muted: #e5e7eb;
+          --text-primary: #1f2328;
+          --text-secondary: #656d76;
+          --text-muted: #8c959f;
+          --diff-add-bg: #e6ffec;
+          --diff-add-num-bg: #ccffd8;
+          --diff-add-word: #abf2bc;
+          --diff-add-text: #1a7f37;
+          --diff-del-bg: #ffebe9;
+          --diff-del-num-bg: #ffd7d5;
+          --diff-del-word: #ffb3b0;
+          --diff-del-text: #cf222e;
+          --diff-hunk-bg: #ddf4ff;
+          --diff-hunk-num-bg: #b6e3ff;
+          --diff-hunk-text: #0969da;
+          --diff-empty-bg: #f6f8fa;
+          --syn-keyword: #cf222e;
+          --syn-comment: #6e7781;
+          --syn-string: #0a3069;
+          --syn-number: #0550ae;
+          --syn-preproc: #8250df;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+          background: var(--bg-canvas);
+          color: var(--text-primary);
+          font-family: var(--font-sans);
+          font-size: 14px;
+          line-height: 1.5;
+          padding: 20px;
+          -webkit-font-smoothing: antialiased;
+        }
+        .report-header {
+          margin-bottom: 24px;
+          padding-bottom: 16px;
+          border-bottom: 1px solid var(--border-default);
+        }
+        .report-title h1 {
+          font-size: 20px;
+          font-weight: 700;
+          margin-bottom: 10px;
+          font-family: var(--font-mono);
+        }
+        .report-meta {
+          display: flex;
+          gap: 18px;
+          flex-wrap: wrap;
+          font-size: 13px;
+          color: var(--text-secondary);
+          align-items: center;
+        }
+        .report-meta .stat-add { color: var(--diff-add-text); font-weight: 700; font-family: var(--font-mono); }
+        .report-meta .stat-del { color: var(--diff-del-text); font-weight: 700; font-family: var(--font-mono); }
+        .report-meta .sep { color: var(--border-default); }
+        .file-card {
+          background: var(--bg-canvas);
+          border: 1px solid var(--border-default);
+          border-radius: 10px;
+          overflow: clip;
+          margin-bottom: 20px;
+        }
+        .file-card-header {
+          background: var(--bg-surface);
+          border-bottom: 1px solid var(--border-default);
+          padding: 10px 14px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+        }
+        .file-card-left {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          min-width: 0;
+          flex: 1;
+        }
+        .file-path-display {
+          font-family: var(--font-mono);
+          font-size: 13px;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+        .file-path-dir { color: var(--text-secondary); }
+        .file-path-name { font-weight: 700; }
+        .ext-badge {
+          font-family: var(--font-mono);
+          font-size: 10px;
+          font-weight: 700;
+          padding: 2px 5px;
+          border-radius: 4px;
+          text-transform: uppercase;
+          flex-shrink: 0;
+        }
+        .ext-c { background: #ddf4ff; color: #0969da; }
+        .ext-h { background: #fbefff; color: #8250df; }
+        .ext-dsc { background: #fff8c5; color: #9a6700; }
+        .ext-default { background: #eaeef2; color: var(--text-secondary); }
+        .file-stats-badge {
+          display: flex;
+          gap: 8px;
+          font-family: var(--font-mono);
+          font-size: 12px;
+          font-weight: 700;
+        }
+        .file-stats-badge .stat-add { color: var(--diff-add-text); }
+        .file-stats-badge .stat-del { color: var(--diff-del-text); }
+        .file-card-body { overflow-x: auto; }
+        .diff-table {
+          width: 100%;
+          border-collapse: collapse;
+          font-family: var(--font-mono);
+          font-size: 12.5px;
+          line-height: 20px;
+          table-layout: fixed;
+        }
+        .diff-table.unified col.col-num { width: 50px; }
+        .diff-table.unified col.col-sign { width: 24px; }
+        .diff-table.unified col.col-code { width: auto; }
+        .diff-table.split col.col-num { width: 48px; }
+        .diff-table.split col.col-sign { width: 22px; }
+        .diff-table.split col.col-code { width: calc(50% - 70px); }
+        .diff-row td { padding: 0; vertical-align: top; }
+        .line-num {
+          text-align: right;
+          padding: 0 8px !important;
+          color: var(--text-muted);
+          user-select: none;
+          font-size: 11.5px;
+          border-right: 1px solid var(--border-muted);
+          background: var(--bg-surface);
+        }
+        .line-sign { text-align: center; user-select: none; font-weight: 600; }
+        .line-code { padding: 0 12px 0 4px !important; white-space: pre; overflow-x: hidden; }
+        .wrap-lines .line-code { white-space: pre-wrap; word-break: break-all; }
+        .split-divider { border-left: 1px solid var(--border-default); }
+        .row-hunk td { background: var(--diff-hunk-bg); color: var(--diff-hunk-text); padding-top: 4px; padding-bottom: 4px; }
+        .row-hunk .line-num { background: var(--diff-hunk-num-bg); color: var(--diff-hunk-text); }
+        .hunk-header-cell { padding: 4px 12px !important; font-size: 12px; }
+        .row-add td.cell-add, .row-add.unified td { background: var(--diff-add-bg); }
+        .row-add .line-num.cell-add, .row-add.unified .line-num { background: var(--diff-add-num-bg); color: var(--diff-add-text); }
+        .row-add .line-sign.cell-add, .row-add.unified .line-sign { color: var(--diff-add-text); }
+        .row-del td.cell-del, .row-del.unified td { background: var(--diff-del-bg); }
+        .row-del .line-num.cell-del, .row-del.unified .line-num { background: var(--diff-del-num-bg); color: var(--diff-del-text); }
+        .row-del .line-sign.cell-del, .row-del.unified .line-sign { color: var(--diff-del-text); }
+        td.cell-empty { background: var(--diff-empty-bg); }
+        .word-add { background: var(--diff-add-word); border-radius: 3px; padding: 1px 0; }
+        .word-del { background: var(--diff-del-word); border-radius: 3px; padding: 1px 0; }
+        .tok-comment { color: var(--syn-comment); font-style: italic; }
+        .tok-keyword { color: var(--syn-keyword); font-weight: 500; }
+        .tok-string  { color: var(--syn-string); }
+        .tok-number  { color: var(--syn-number); }
+        .tok-preproc { color: var(--syn-preproc); }
+        .report-footer {
+          margin-top: 32px;
+          padding-top: 16px;
+          border-top: 1px solid var(--border-default);
+          font-size: 12px;
+          color: var(--text-muted);
+          text-align: center;
+        }
+        @media print {
+          body { padding: 0; }
+          .file-card { break-inside: avoid; }
+        }
+      `;
+
+      const html = `<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>${escapeHtml(state.fileName)} — Patch Diff Report</title>
+<style>${css}</style>
+</head>
+<body>
+<header class="report-header">
+  <div class="report-title">
+    <h1>${escapeHtml(state.fileName)}</h1>
+    <div class="report-meta">
+      <span>${state.parsedFiles.length} 個檔案變更</span>
+      <span class="sep">|</span>
+      <span class="stat-add">+${totalAdd}</span>
+      <span class="stat-del">-${totalDel}</span>
+      <span class="sep">|</span>
+      <span>檢視模式：${state.viewMode === 'split' ? '並排對比 (Split)' : '單欄檢視 (Unified)'}</span>
+      <span class="sep">|</span>
+      <span>產生時間：${timeStr}</span>
+    </div>
+  </div>
+</header>
+<main>${cardsHtml}</main>
+<footer class="report-footer">由 PatchLens 產生 — 本檔案為靜態 HTML，可離線開啟或列印成 PDF</footer>
+</body>
+</html>`;
+
+      const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${titleBase}_diff_report.html`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+      showToast(`已下載 ${titleBase}_diff_report.html`);
+    }
+
+    /* ==========================================================================
+       6. Helpers
+       ========================================================================== */
+    function copyToClipboard(text, successMsg) {
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.select();
+      try {
+        document.execCommand('copy');
+        showToast(successMsg);
+      } catch (e) {
+        showToast('複製失敗，請手動選取複製');
+      }
+      document.body.removeChild(textarea);
+    }
+
+    let toastTimer = null;
+    function showToast(message) {
+      const el = document.getElementById('toast');
+      el.textContent = message;
+      el.classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => {
+        el.classList.remove('show');
+      }, 2400);
+    }
+
+    /* ==========================================================================
+       7. Initialization
+       ========================================================================== */
+    document.addEventListener('DOMContentLoaded', () => {
+      // 初始渲染 (空狀態)
+      renderGlobalStats();
+      renderSidebar();
+      renderDiffCards();
+
+      // 檢視模式切換
+      const viewSplitBtn = document.getElementById('viewSplitBtn');
+      const viewUnifiedBtn = document.getElementById('viewUnifiedBtn');
+
+      [viewSplitBtn, viewUnifiedBtn].forEach(btn => {
+        btn.addEventListener('click', () => {
+          const mode = btn.getAttribute('data-mode');
+          if (state.viewMode === mode) return;
+          state.viewMode = mode;
+          viewSplitBtn.classList.toggle('active', mode === 'split');
+          viewUnifiedBtn.classList.toggle('active', mode === 'unified');
+          renderDiffCards();
+        });
+      });
+
+      // 主題切換
+      const themeToggleBtn = document.getElementById('themeToggleBtn');
+      const sunIcon = document.getElementById('sunIcon');
+      const moonIcon = document.getElementById('moonIcon');
+
+      themeToggleBtn.addEventListener('click', () => {
+        const html = document.documentElement;
+        const isDark = html.getAttribute('data-theme') === 'dark';
+        const nextTheme = isDark ? 'light' : 'dark';
+        html.setAttribute('data-theme', nextTheme);
+        sunIcon.style.display = nextTheme === 'dark' ? 'block' : 'none';
+        moonIcon.style.display = nextTheme === 'light' ? 'block' : 'none';
+      });
+
+      // 側邊欄切換
+      const sidebar = document.getElementById('sidebar');
+      document.getElementById('toggleSidebarBtn').addEventListener('click', () => {
+        sidebar.classList.toggle('collapsed');
+      });
+
+      // 檔案篩選
+      const filterInput = document.getElementById('fileFilterInput');
+      const clearFilterBtn = document.getElementById('clearFilterBtn');
+
+      filterInput.addEventListener('input', (e) => {
+        state.filterQuery = e.target.value;
+        clearFilterBtn.classList.toggle('visible', state.filterQuery.length > 0);
+        renderSidebar();
+        renderDiffCards();
+      });
+
+      clearFilterBtn.addEventListener('click', () => {
+        state.filterQuery = '';
+        filterInput.value = '';
+        clearFilterBtn.classList.remove('visible');
+        renderSidebar();
+        renderDiffCards();
+      });
+
+      // 展開全部 / 收合全部 / 自動換行
+      document.getElementById('expandAllBtn').addEventListener('click', () => {
+        state.collapsedFiles.clear();
+        renderDiffCards();
+      });
+
+      document.getElementById('collapseAllBtn').addEventListener('click', () => {
+        state.parsedFiles.forEach(f => state.collapsedFiles.add(f.id));
+        renderDiffCards();
+      });
+
+      document.getElementById('toggleWrapBtn').addEventListener('click', () => {
+        state.wrapLines = !state.wrapLines;
+        document.getElementById('wrapBtnText').textContent = `自動換行：${state.wrapLines ? '開啟' : '關閉'}`;
+        renderDiffCards();
+      });
+
+      // 上傳
+      const fileInput = document.getElementById('fileInput');
+      document.getElementById('uploadBtn').addEventListener('click', () => fileInput.click());
+
+      const handleUploadedFile = (file) => {
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          if (loadPatchData(file.name, ev.target.result)) {
+            showToast(`已成功載入：${file.name}`);
+          }
+        };
+        reader.readAsText(file);
+      };
+
+      fileInput.addEventListener('change', (e) => {
+        handleUploadedFile(e.target.files[0]);
+        e.target.value = '';
+      });
+
+      // 拖曳上傳
+      const dragOverlay = document.getElementById('dragOverlay');
+      let dragCounter = 0;
+
+      window.addEventListener('dragenter', (e) => {
+        e.preventDefault();
+        dragCounter++;
+        dragOverlay.classList.add('active');
+      });
+
+      window.addEventListener('dragleave', (e) => {
+        e.preventDefault();
+        dragCounter--;
+        if (dragCounter <= 0) {
+          dragCounter = 0;
+          dragOverlay.classList.remove('active');
+        }
+      });
+
+      window.addEventListener('dragover', (e) => {
+        e.preventDefault();
+      });
+
+      window.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dragCounter = 0;
+        dragOverlay.classList.remove('active');
+        if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+          handleUploadedFile(e.dataTransfer.files[0]);
+        }
+      });
+
+      // 下載 Diff HTML
+      document.getElementById('downloadHtmlBtn').addEventListener('click', downloadDiffHtml);
+
+      // 貼上 Diff Modal
+      const pasteModal = document.getElementById('pasteModal');
+      const pasteTextarea = document.getElementById('pasteTextarea');
+
+      const closeModal = () => pasteModal.classList.remove('open');
+
+      document.getElementById('openPasteModalBtn').addEventListener('click', () => {
+        pasteTextarea.value = '';
+        pasteModal.classList.add('open');
+        setTimeout(() => pasteTextarea.focus(), 50);
+      });
+
+      document.getElementById('closePasteModalBtn').addEventListener('click', closeModal);
+      document.getElementById('cancelPasteBtn').addEventListener('click', closeModal);
+
+      pasteModal.addEventListener('click', (e) => {
+        if (e.target === pasteModal) closeModal();
+      });
+
+      document.getElementById('applyPasteBtn').addEventListener('click', () => {
+        const raw = pasteTextarea.value.trim();
+        if (!raw) {
+          showToast('請先貼上 Diff 內容');
+          return;
+        }
+        if (loadPatchData('pasted-changes.patch', raw)) {
+          closeModal();
+          showToast('已解析貼上的 Diff 內容');
+        }
+      });
+
+      // Scroll-spy
+      window.addEventListener('scroll', () => {
+        if (state.parsedFiles.length === 0) return;
+        const cards = document.querySelectorAll('.file-card');
+        let currentId = null;
+        cards.forEach(card => {
+          const rect = card.getBoundingClientRect();
+          if (rect.top <= 140) {
+            currentId = card.id;
+          }
+        });
+        if (currentId && currentId !== state.activeFileId) {
+          state.activeFileId = currentId;
+          document.querySelectorAll('.tree-item').forEach(el => {
+            el.classList.toggle('active', el.getAttribute('data-target') === currentId);
+          });
+        }
+      }, { passive: true });
+    });
+  </script>
+</body>
+</html>
