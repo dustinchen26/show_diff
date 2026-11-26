@@ -1229,6 +1229,7 @@
       let currentHunk = null;
       let oldLine = 0;
       let newLine = 0;
+      let fileCounter = 0;
 
       const finishHunk = () => {
         if (currentHunk && currentFile) {
@@ -1240,63 +1241,79 @@
       const finishFile = () => {
         finishHunk();
         if (currentFile) {
-          files.push(currentFile);
+          if (!currentFile.path && currentFile.oldPath) {
+            currentFile.path = currentFile.oldPath;
+          }
+          if (currentFile.hunks.length > 0 || currentFile.path) {
+            files.push(currentFile);
+          }
           currentFile = null;
         }
       };
 
+      const startFile = (path, oldPath) => {
+        finishFile();
+        currentFile = {
+          id: `file-${fileCounter++}`,
+          path: path || '',
+          oldPath: oldPath || path || '',
+          indexInfo: '',
+          additions: 0,
+          deletions: 0,
+          hunks: [],
+          isNew: oldPath === '/dev/null',
+          isDeleted: false
+        };
+      };
+
+      // hunk 還有未消耗的 old/new 行 → 這行一定屬於 hunk 內容
+      const hunkOpen = () =>
+        currentHunk &&
+        (currentHunk.oldRemaining > 0 || currentHunk.newRemaining > 0);
+
+      // 偵測 diffstat / email 頭統計行，避免被誤判為檔案路徑
+      const isDiffstat = (s) =>
+        /\|\s+\d+\s*[+-]*\s*$/.test(s) ||
+        /^\s*\d+\s+files?\s+changed/.test(s);
+
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
 
+        // 1. diff --git：明確的檔案邊界
         if (line.startsWith('diff --git ')) {
-          finishFile();
           const match = line.match(/^diff --git a\/(.+?) b\/(.+)$/);
-          const path = match ? match[2] : line.replace('diff --git ', '').trim();
-          currentFile = {
-            id: `file-${files.length}`,
-            path,
-            oldPath: match ? match[1] : path,
-            indexInfo: '',
-            additions: 0,
-            deletions: 0,
-            hunks: []
-          };
+          startFile(match ? match[2] : '', match ? match[1] : '');
           continue;
         }
 
-        if (!currentFile && line.startsWith('--- ')) {
-          const path = line.replace(/^---\s+(a\/)?/, '').trim();
-          currentFile = {
-            id: `file-${files.length}`,
-            path,
-            oldPath: path,
-            indexInfo: '',
-            additions: 0,
-            deletions: 0,
-            hunks: []
-          };
+        // 2. \ No newline at end of file：不消耗 hunk 行數
+        if (line.startsWith('\\')) {
           continue;
         }
 
-        if (!currentFile) continue;
-
-        if (line.startsWith('index ')) {
-          currentFile.indexInfo = line.replace('index ', '').trim();
+        // 3. hunk 內容（最優先，避免以 --- / +++ 開頭的內容被誤判為檔案邊界）
+        if (hunkOpen()) {
+          if (line.startsWith('+')) {
+            currentHunk.lines.push({ type: 'add', oldNum: null, newNum: newLine++, content: line.slice(1) });
+            currentFile.additions++;
+            currentHunk.newRemaining--;
+            continue;
+          }
+          if (line.startsWith('-')) {
+            currentHunk.lines.push({ type: 'del', oldNum: oldLine++, newNum: null, content: line.slice(1) });
+            currentFile.deletions++;
+            currentHunk.oldRemaining--;
+            continue;
+          }
+          // context 行（含空白行、以單一空格開頭）
+          const content = line.startsWith(' ') ? line.slice(1) : line;
+          currentHunk.lines.push({ type: 'context', oldNum: oldLine++, newNum: newLine++, content });
+          currentHunk.oldRemaining--;
+          currentHunk.newRemaining--;
           continue;
         }
 
-        if (line.startsWith('--- ')) {
-          const p = line.replace(/^---\s+(a\/)?/, '').trim();
-          if (p !== '/dev/null') currentFile.oldPath = p;
-          continue;
-        }
-
-        if (line.startsWith('+++ ')) {
-          const p = line.replace(/^\+\+\+\s+(b\/)?/, '').trim();
-          if (p !== '/dev/null') currentFile.path = p;
-          continue;
-        }
-
+        // 4. 新 hunk 開始
         if (line.startsWith('@@ ')) {
           finishHunk();
           const hunkMatch = line.match(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$/);
@@ -1306,41 +1323,53 @@
             currentHunk = {
               header: line,
               context: (hunkMatch[5] || '').trim(),
-              lines: []
+              lines: [],
+              oldRemaining: hunkMatch[2] !== undefined ? parseInt(hunkMatch[2], 10) : 1,
+              newRemaining: hunkMatch[4] !== undefined ? parseInt(hunkMatch[4], 10) : 1
             };
           }
           continue;
         }
 
-        if (currentHunk) {
-          if (line.startsWith('+')) {
-            currentHunk.lines.push({
-              type: 'add',
-              oldNum: null,
-              newNum: newLine++,
-              content: line.slice(1)
-            });
-            currentFile.additions++;
-          } else if (line.startsWith('-')) {
-            currentHunk.lines.push({
-              type: 'del',
-              oldNum: oldLine++,
-              newNum: null,
-              content: line.slice(1)
-            });
-            currentFile.deletions++;
-          } else if (line.startsWith('\\ No newline at end of file')) {
-            // Ignore meta marker
-          } else {
-            if (i === lines.length - 1 && line === '') continue;
-            const content = line.startsWith(' ') ? line.slice(1) : line;
-            currentHunk.lines.push({
-              type: 'context',
-              oldNum: oldLine++,
-              newNum: newLine++,
-              content
-            });
+        // 5. 檔案元數據（排除 diffstat 與 email 頭分隔符）
+        if (line.startsWith('--- ')) {
+          if (isDiffstat(line)) continue;
+          // 無 diff --git 頭的 patch：--- 就是檔案邊界
+          if (currentFile && currentFile.hunks.length > 0) {
+            finishFile();
           }
+          const p = line.replace(/^---\s+(?:a\/)?/, '').trim();
+          if (!p) continue;   // `---` 後面為空：email 頭分隔符
+          if (!currentFile) {
+            startFile(p === '/dev/null' ? '' : p, p);
+          } else {
+            currentFile.oldPath = p;
+            if (p === '/dev/null') {
+              currentFile.isNew = true;
+            }
+          }
+          continue;
+        }
+
+        if (line.startsWith('+++ ')) {
+          if (isDiffstat(line)) continue;
+          if (currentFile) {
+            const p = line.replace(/^\+\+\+\s+(?:b\/)?/, '').trim();
+            if (p === '/dev/null') {
+              currentFile.isDeleted = true;
+              if (!currentFile.path) currentFile.path = currentFile.oldPath;
+            } else {
+              currentFile.path = p;
+            }
+          }
+          continue;
+        }
+
+        if (!currentFile) continue;
+
+        if (line.startsWith('index ')) {
+          currentFile.indexInfo = line.replace('index ', '').trim();
+          continue;
         }
       }
 
